@@ -63,8 +63,8 @@ jobs:
       - name: Marketing images
         run: |
           python3 work/relic-fx/tools/cover.py out/compat out/marketing
-          ffmpeg -loglevel error -framerate 12 -i out/compat/frames/frame_%04d.png \
-            -vf "scale=560:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" \
+          ffmpeg -loglevel error -framerate 10 -i out/compat/frames/frame_%04d.png \
+            -vf "scale=480:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" \
             out/marketing/relic-fx.gif
           mkdir -p out/marketing/forward && cp out/forward/*.png out/marketing/forward/ 2>/dev/null || true
           ls -la out/marketing
