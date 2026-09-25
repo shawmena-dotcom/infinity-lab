@@ -1,0 +1,88 @@
+# Tests an encrypted Godot product bundle on a public runner (free minutes) without exposing its source.
+# Public outputs: logs + marketing images only. The sellable zip is uploaded encrypted.
+name: godot-product
+on:
+  push:
+    paths: ["bundles/*.enc", ".github/workflows/godot-product.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GODOT_VERSION: 4.7.2-stable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decrypt bundle
+        env:
+          LAB_KEY: ${{ secrets.LAB_KEY }}
+        run: |
+          mkdir work
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:LAB_KEY -in bundles/relic-fx.tar.gz.enc | tar xz -C work
+          ls work
+
+      - name: Install runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libxcursor1 libxinerama1 \
+            libxrandr2 libxi6 ffmpeg python3-pil fonts-dejavu-core zip >/dev/null
+          curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q godot.zip && mv Godot_v${GODOT_VERSION}_linux.x86_64 "$RUNNER_TEMP/godot"
+
+      - name: Import project
+        working-directory: work/relic-fx
+        run: timeout 300 "$RUNNER_TEMP/godot" --headless --import --path . 2>&1 | tee "$GITHUB_WORKSPACE/import.log" || true
+
+      - name: Render (Compatibility)
+        working-directory: work/relic-fx
+        run: |
+          SHOTS_DIR="$GITHUB_WORKSPACE/out/compat" GIF_FRAMES=1 timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" \
+            "$RUNNER_TEMP/godot" --path . --rendering-method gl_compatibility --rendering-driver opengl3 \
+            --audio-driver Dummy --resolution 1280x720 --script res://tools/render.gd 2>&1 | tee "$GITHUB_WORKSPACE/compat.log"
+
+      - name: Render (Forward+)
+        continue-on-error: true
+        working-directory: work/relic-fx
+        run: |
+          SHOTS_DIR="$GITHUB_WORKSPACE/out/forward" timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" \
+            "$RUNNER_TEMP/godot" --path . --rendering-method forward_plus --rendering-driver vulkan \
+            --audio-driver Dummy --resolution 1280x720 --script res://tools/render.gd 2>&1 | tee "$GITHUB_WORKSPACE/forward.log"
+
+      - name: Check logs
+        run: |
+          for f in import.log compat.log forward.log; do
+            echo "== $f"; grep -nE "ERROR|WARNING|RENDER_OK" "$f" | head -60 || true
+          done
+          grep -q RENDER_OK compat.log
+          ! grep -qE "SHADER ERROR|SCRIPT ERROR|Parse Error" compat.log import.log
+          if grep -q RENDER_OK forward.log; then echo "FORWARD_PLUS=ok"; else echo "FORWARD_PLUS=failed"; fi
+          if grep -qE "SHADER ERROR|SCRIPT ERROR" forward.log; then echo "FORWARD_PLUS_SHADER_ERRORS=yes"; fi
+
+      - name: Marketing images
+        run: |
+          python3 work/relic-fx/tools/cover.py out/compat out/marketing
+          ffmpeg -loglevel error -framerate 12 -i out/compat/frames/frame_%04d.png \
+            -vf "scale=560:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" \
+            out/marketing/relic-fx.gif
+          mkdir -p out/marketing/forward && cp out/forward/*.png out/marketing/forward/ 2>/dev/null || true
+          ls -la out/marketing
+
+      - name: Package (encrypted)
+        env:
+          LAB_KEY: ${{ secrets.LAB_KEY }}
+        run: |
+          mkdir -p pkg/RelicFX && cd work/relic-fx
+          cp -r addons demo project.godot README.md LICENSE.txt ../../pkg/RelicFX/
+          cd ../../pkg && zip -qr RelicFX-v1.0.zip RelicFX && ls -la
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:LAB_KEY -in RelicFX-v1.0.zip -out ../out/RelicFX-v1.0.zip.enc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marketing
+          path: out/marketing
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-encrypted
+          path: out/RelicFX-v1.0.zip.enc
