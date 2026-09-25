@@ -75,7 +75,7 @@ jobs:
         run: |
           mkdir -p pkg/RelicFX && cd work/relic-fx
           cp -r addons demo project.godot README.md LICENSE.txt ../../pkg/RelicFX/
-          cd ../../pkg && zip -qr RelicFX-v1.0.zip RelicFX && ls -la
+          cd ../../pkg && find RelicFX -name "._*" -delete && zip -qr RelicFX-v1.0.zip RelicFX && ls -la
           openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:LAB_KEY -in RelicFX-v1.0.zip -out ../out/RelicFX-v1.0.zip.enc
 
       - uses: actions/upload-artifact@v4
